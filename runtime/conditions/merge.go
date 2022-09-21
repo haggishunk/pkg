@@ -43,11 +43,12 @@ type localizedCondition struct {
 // More specifically:
 // 1. Conditions are grouped by status, polarity and observed generation (optional).
 // 2. The resulting condition groups are sorted according to the following priority:
-//   - P0 - Status=True, NegativePolarity=True
-//   - P1 - Status=False, NegativePolarity=False
-//   - P2 - Status=True, NegativePolarity=False
-//   - P3 - Status=False, NegativePolarity=True
-//   - P4 - Status=Unknown
+//   - P0 - Status=False, BiPolarity=True
+//   - P1 - Status=True, NegativePolarity=True
+//   - P2 - Status=False, NegativePolarity=False
+//   - P3 - Status=True, NegativePolarity=False; Status=True, BiPolarity=True
+//   - P4 - Status=False, NegativePolarity=True
+//   - P5 - Status=Unknown
 // 3. The group with highest priority is used to determine status, and other info of the target condition.
 // 4. If the polarity of the highest priority and target priority differ, it is inverted.
 // 5. If the observed generation is considered, the condition groups with the latest generation get the highest
@@ -98,8 +99,11 @@ func getConditionGroups(conditions []localizedCondition, options *mergeOptions) 
 
 		added := false
 		for i := range groups {
+			// Group the conditions together only when the status, negative
+			// polarity and bipolarity are the same.
 			if groups[i].status == condition.Status &&
-				groups[i].negativePolarity == stringInSlice(options.negativePolarityConditionTypes, condition.Type) {
+				groups[i].negativePolarity == stringInSlice(options.negativePolarityConditionTypes, condition.Type) &&
+				groups[i].biPolarity == stringInSlice(options.biPolarityConditionTypes, condition.Type) {
 				// If withLatestGeneration is true, add to group only if the generation match.
 				if options.withLatestGeneration && groups[i].generation != condition.ObservedGeneration {
 					continue
@@ -114,6 +118,7 @@ func getConditionGroups(conditions []localizedCondition, options *mergeOptions) 
 				conditions:       []localizedCondition{condition},
 				status:           condition.Status,
 				negativePolarity: stringInSlice(options.negativePolarityConditionTypes, condition.Type),
+				biPolarity:       stringInSlice(options.biPolarityConditionTypes, condition.Type),
 				generation:       condition.ObservedGeneration,
 			})
 		}
@@ -205,6 +210,7 @@ func (g conditionGroups) latestGeneration() int64 {
 type conditionGroup struct {
 	status           metav1.ConditionStatus
 	negativePolarity bool
+	biPolarity       bool
 	conditions       []localizedCondition
 	generation       int64
 }
@@ -214,19 +220,21 @@ type conditionGroup struct {
 func (g conditionGroup) mergePriority() (p int) {
 	switch g.status {
 	case metav1.ConditionTrue:
-		p = 0
-		if !g.negativePolarity {
-			p = 2
-		}
-		return
-	case metav1.ConditionFalse:
 		p = 1
-		if g.negativePolarity {
+		if !g.negativePolarity {
 			p = 3
 		}
 		return
+	case metav1.ConditionFalse:
+		p = 2
+		if g.biPolarity {
+			p = 0
+		} else if g.negativePolarity {
+			p = 4
+		}
+		return
 	case metav1.ConditionUnknown:
-		return 4
+		return 5
 	default:
 		return 99
 	}

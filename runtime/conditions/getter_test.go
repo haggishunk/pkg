@@ -45,6 +45,8 @@ var (
 	stalledFalse     = FalseCondition(meta.StalledCondition, "reason stalledFalse", "message stalledFalse")
 	reconcilingTrue  = TrueCondition(meta.ReconcilingCondition, "reason reconcilingTrue", "message reconcilingTrue")
 	reconcilingFalse = TrueCondition(meta.ReconcilingCondition, "reason reconcilingFalse", "message reconcilingFalse")
+	bipolarTrue      = TrueCondition("bipolartrue", "reason bipolarTrue", "message bipolarTrue")
+	bipolarFalse     = FalseCondition("bipolarfalse", "reason bipolarFalse", "message bipolarFalse")
 )
 
 func TestGetAndHas(t *testing.T) {

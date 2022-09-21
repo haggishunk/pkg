@@ -71,7 +71,7 @@ func TestNewConditionsGroup(t *testing.T) {
 
 	// got[2] should be True/Positive and it should have two conditions
 	g.Expect(got[2].status).To(Equal(metav1.ConditionTrue))
-	g.Expect(got[1].negativePolarity).To(BeFalse())
+	g.Expect(got[2].negativePolarity).To(BeFalse())
 	g.Expect(got[2].conditions).To(HaveLen(2))
 
 	// got[3] should be False/Negative and it should have one condition
@@ -87,7 +87,77 @@ func TestNewConditionsGroup(t *testing.T) {
 	// got[5] should be Unknown/Negative and it should have one condition
 	g.Expect(got[5].status).To(Equal(metav1.ConditionUnknown))
 	g.Expect(got[5].negativePolarity).To(BeTrue())
-	g.Expect(got[3].conditions).To(HaveLen(1))
+	g.Expect(got[5].conditions).To(HaveLen(1))
+
+	// nil conditions are ignored
+}
+
+func TestNewConditionsGroupWithBiPolarity(t *testing.T) {
+	g := NewWithT(t)
+
+	negativeFalseReconciling := FalseCondition(meta.ReconcilingCondition, "reason reconciling1", "message reconciling1")
+	negativeTrueStalled := TrueCondition(meta.StalledCondition, "reason stalled1", "message stalled1")
+	negativeUnknownReconciling := UnknownCondition(meta.ReconcilingCondition, "reason reconciling2", "message reconciling2")
+
+	conditions := []*metav1.Condition{nil1, true1, true1, false1, unknown1, negativeFalseReconciling, negativeTrueStalled, negativeUnknownReconciling, bipolarTrue, bipolarFalse}
+
+	got := getConditionGroups(conditionsWithSource(&testdata.Fake{}, conditions...), &mergeOptions{
+		negativePolarityConditionTypes: []string{meta.ReconcilingCondition, meta.StalledCondition},
+		biPolarityConditionTypes:       []string{bipolarTrue.Type, bipolarFalse.Type},
+	})
+
+	g.Expect(got).ToNot(BeNil())
+	g.Expect(got).To(HaveLen(8))
+
+	// The TopGroup should be False/Bipolar and it should have one condition
+	g.Expect(got.TopGroup().status).To(Equal(metav1.ConditionFalse))
+	g.Expect(got.TopGroup().biPolarity).To(BeTrue())
+	g.Expect(got.TopGroup().conditions).To(HaveLen(1))
+
+	// The TruePositivePolarityGroup should be True/Positive and it should have one condition
+	g.Expect(got.TruePositivePolarityGroup().status).To(Equal(metav1.ConditionTrue))
+	g.Expect(got.TruePositivePolarityGroup().negativePolarity).To(BeFalse())
+	g.Expect(got.TruePositivePolarityGroup().conditions).To(HaveLen(2))
+
+	// got[0] should be False/Bipolar and it should have one condition
+	g.Expect(got[0].status).To(Equal(metav1.ConditionFalse))
+	g.Expect(got[0].biPolarity).To(BeTrue())
+	g.Expect(got[0].conditions).To(HaveLen(1))
+
+	// got[1] should be True/Negative and it should have one conditions
+	g.Expect(got[1].status).To(Equal(metav1.ConditionTrue))
+	g.Expect(got[1].negativePolarity).To(BeTrue())
+	g.Expect(got[1].conditions).To(HaveLen(1))
+
+	// got[2] should be False/Positive and it should have one conditions
+	g.Expect(got[2].status).To(Equal(metav1.ConditionFalse))
+	g.Expect(got[2].negativePolarity).To(BeFalse())
+	g.Expect(got[2].conditions).To(HaveLen(1))
+
+	// got[3] should be True/Positive and it should have two condition
+	g.Expect(got[3].status).To(Equal(metav1.ConditionTrue))
+	g.Expect(got[3].negativePolarity).To(BeFalse())
+	g.Expect(got[3].conditions).To(HaveLen(2))
+
+	// got[4] should be True/Bipolar and it should have one condition
+	g.Expect(got[4].status).To(Equal(metav1.ConditionTrue))
+	g.Expect(got[4].negativePolarity).To(BeFalse())
+	g.Expect(got[4].conditions).To(HaveLen(1))
+
+	// got[5] should be False/Negative and it should have one condition
+	g.Expect(got[5].status).To(Equal(metav1.ConditionFalse))
+	g.Expect(got[5].negativePolarity).To(BeTrue())
+	g.Expect(got[5].conditions).To(HaveLen(1))
+
+	// got[6] should be Unknown/Positive and it should have one condition
+	g.Expect(got[6].status).To(Equal(metav1.ConditionUnknown))
+	g.Expect(got[6].negativePolarity).To(BeFalse())
+	g.Expect(got[6].conditions).To(HaveLen(1))
+
+	// got[7] should be Unknown/Negative and it should have one condition
+	g.Expect(got[7].status).To(Equal(metav1.ConditionUnknown))
+	g.Expect(got[7].negativePolarity).To(BeTrue())
+	g.Expect(got[7].conditions).To(HaveLen(1))
 
 	// nil conditions are ignored
 }
@@ -96,6 +166,7 @@ func TestMergeRespectPriority(t *testing.T) {
 	tests := []struct {
 		name               string
 		negativeConditions []string
+		bipolarConditions  []string
 		conditions         []*metav1.Condition
 		want               *metav1.Condition
 	}{
@@ -160,6 +231,38 @@ func TestMergeRespectPriority(t *testing.T) {
 			conditions: []*metav1.Condition{nil1, nil1, nil1},
 			want:       nil,
 		},
+		{
+			name:              "When True/Bipolar only, it returns True/Bipolar",
+			bipolarConditions: []string{bipolarTrue.Type},
+			conditions:        []*metav1.Condition{bipolarTrue},
+			want:              TrueCondition("foo", "reason bipolarTrue", "message bipolarTrue"),
+		},
+		{
+			name:              "When True/Bipolar and True/Positive, it returns True/Bipolar",
+			bipolarConditions: []string{bipolarTrue.Type},
+			conditions:        []*metav1.Condition{bipolarTrue, true1},
+			want:              TrueCondition("foo", "reason bipolarTrue", "message bipolarTrue"),
+		},
+		{
+			name:              "When True/Positive and True/Bipolar, it returns True/Positive",
+			bipolarConditions: []string{bipolarTrue.Type},
+			conditions:        []*metav1.Condition{true1, bipolarTrue},
+			want:              TrueCondition("foo", "reason true1", "message true1"),
+		},
+		{
+			name:               "When False/Bipolar and True/Negative, it returns False/Bipolar",
+			negativeConditions: []string{true1.Type},
+			bipolarConditions:  []string{bipolarFalse.Type},
+			conditions:         []*metav1.Condition{bipolarFalse, true1},
+			want:               FalseCondition("foo", "reason bipolarFalse", "message bipolarFalse"),
+		},
+		{
+			name:               "When True/Bipolar and True/Negative, it returns TrueNegative",
+			negativeConditions: []string{true1.Type},
+			bipolarConditions:  []string{bipolarTrue.Type},
+			conditions:         []*metav1.Condition{bipolarTrue, true1},
+			want:               FalseCondition("foo", "reason true1", "message true1"),
+		},
 	}
 
 	for _, tt := range tests {
@@ -168,6 +271,7 @@ func TestMergeRespectPriority(t *testing.T) {
 
 			got := merge(conditionsWithSource(&testdata.Fake{}, tt.conditions...), "foo", &mergeOptions{
 				negativePolarityConditionTypes: tt.negativeConditions,
+				biPolarityConditionTypes:       tt.bipolarConditions,
 			})
 
 			if tt.want == nil {

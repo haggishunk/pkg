@@ -33,6 +33,7 @@ import (
 type mergeOptions struct {
 	conditionTypes                 []string
 	negativePolarityConditionTypes []string
+	biPolarityConditionTypes       []string
 
 	addSourceRef                       bool
 	addSourceRefIfConditionTypes       []string
@@ -48,6 +49,20 @@ type mergeOptions struct {
 
 // MergeOption defines an option for computing a summary of conditions.
 type MergeOption func(*mergeOptions)
+
+// WithBiPolarityConditions instructs merge about the condition types that that adhere to "normal-true" or
+// "abnormal-false" or BiPolarity pattern, i.e. that conditions are always present regardless of their value with
+// highest abnormal priority when merging.
+//
+// NOTE: This is not a typical status property. It provides conditions that are always present, wheather their value
+// is True or False. When False, they are like Negative Polarity Conditions, but when present along-side Negative
+// Polarity Conditions, BiPolarity with False take precedence in the processing of merging.
+// IMPORTANT: This options works only while generating a Summary or Aggregated condition.
+func WithBiPolarityConditions(t ...string) MergeOption {
+	return func(c *mergeOptions) {
+		c.biPolarityConditionTypes = t
+	}
+}
 
 // WithConditions instructs merge about the condition types to consider when doing a merge operation; if this option is
 // not specified, all the conditions (except Ready, Stalled, and Reconciling) will be considered. This is required so we
