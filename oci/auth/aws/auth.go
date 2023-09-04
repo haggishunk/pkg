@@ -24,15 +24,23 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ecr"
 	"github.com/google/go-containerregistry/pkg/authn"
+	ttlcache "github.com/jellydator/ttlcache/v3"
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	"github.com/fluxcd/pkg/oci"
 )
+
+var cache *ttlcache.Cache[string, authn.AuthConfig]
+
+func init() {
+	cache = ttlcache.New[string, authn.AuthConfig](ttlcache.WithDisableTouchOnHit[string, authn.AuthConfig]())
+}
 
 var registryPartRe = regexp.MustCompile(`([0-9+]*).dkr.ecr.([^/.]*)\.(amazonaws\.com[.cn]*)`)
 
@@ -78,7 +86,7 @@ func (c *Client) WithConfig(cfg *aws.Config) {
 // be the case if it's running in EKS, and may need additional setup
 // otherwise (visit https://aws.github.io/aws-sdk-go-v2/docs/configuring-sdk/
 // as a starting point).
-func (c *Client) getLoginAuth(ctx context.Context, awsEcrRegion string) (authn.AuthConfig, error) {
+func (c *Client) getLoginAuth(ctx context.Context, awsEcrRegion string) (authn.AuthConfig, time.Duration, error) {
 	// No caching of tokens is attempted; the quota for getting an
 	// auth token is high enough that getting a token every time you
 	// scan an image is viable for O(500) images per region. See
@@ -94,7 +102,7 @@ func (c *Client) getLoginAuth(ctx context.Context, awsEcrRegion string) (authn.A
 		cfg, err = config.LoadDefaultConfig(ctx, config.WithRegion(awsEcrRegion))
 		if err != nil {
 			c.mu.Unlock()
-			return authConfig, fmt.Errorf("failed to load default configuration: %w", err)
+			return authConfig, 0, fmt.Errorf("failed to load default configuration: %w", err)
 		}
 		c.config = &cfg
 	}
@@ -105,29 +113,49 @@ func (c *Client) getLoginAuth(ctx context.Context, awsEcrRegion string) (authn.A
 	// pass nil input.
 	ecrToken, err := ecrService.GetAuthorizationToken(ctx, nil)
 	if err != nil {
-		return authConfig, err
+		return authConfig, 0, err
 	}
 
 	// Validate the authorization data.
 	if len(ecrToken.AuthorizationData) == 0 {
-		return authConfig, errors.New("no authorization data")
+		return authConfig, 0, errors.New("no authorization data")
 	}
 	if ecrToken.AuthorizationData[0].AuthorizationToken == nil {
-		return authConfig, fmt.Errorf("no authorization token")
+		return authConfig, 0, fmt.Errorf("no authorization token")
 	}
-	token, err := base64.StdEncoding.DecodeString(*ecrToken.AuthorizationData[0].AuthorizationToken)
+	authData := *&ecrToken.AuthorizationData[0]
+	token, err := base64.StdEncoding.DecodeString(*authData.AuthorizationToken)
 	if err != nil {
-		return authConfig, err
+		return authConfig, 0, err
 	}
 
 	tokenSplit := strings.Split(string(token), ":")
 	// Validate the tokens.
 	if len(tokenSplit) != 2 {
-		return authConfig, fmt.Errorf("invalid authorization token, expected the token to have two parts separated by ':', got %d parts", len(tokenSplit))
+		return authConfig, 0, fmt.Errorf("invalid authorization token, expected the token to have two parts separated by ':', got %d parts", len(tokenSplit))
 	}
 	authConfig = authn.AuthConfig{
 		Username: tokenSplit[0],
 		Password: tokenSplit[1],
+	}
+	expiresIn := authData.ExpiresAt.Sub(time.Now())
+	return authConfig, expiresIn, nil
+}
+
+func (c *Client) getOrCacheLoginAuth(ctx context.Context, awsEcrRegion string, store *ttlcache.Cache[string, authn.AuthConfig]) (authn.AuthConfig, error) {
+	store.DeleteExpired()
+	var authConfig authn.AuthConfig
+	var err error
+	var expiresIn time.Duration
+	retrieved := store.Get(awsEcrRegion)
+	if retrieved != nil && !retrieved.IsExpired() {
+		authConfig = retrieved.Value()
+	} else {
+		authConfig, expiresIn, err = c.getLoginAuth(ctx, awsEcrRegion)
+		if err != nil {
+			return authConfig, err
+		}
+		store.Set(awsEcrRegion, authConfig, expiresIn)
 	}
 	return authConfig, nil
 }
@@ -141,7 +169,7 @@ func (c *Client) Login(ctx context.Context, autoLogin bool, image string) (authn
 			return nil, errors.New("failed to parse AWS ECR image, invalid ECR image")
 		}
 
-		authConfig, err := c.getLoginAuth(ctx, awsEcrRegion)
+		authConfig, err := c.getOrCacheLoginAuth(ctx, awsEcrRegion, cache)
 		if err != nil {
 			return nil, err
 		}
@@ -159,7 +187,7 @@ func (c *Client) OIDCLogin(ctx context.Context, registryURL string) (authn.Authe
 		return nil, errors.New("failed to parse AWS ECR image, invalid ECR image")
 	}
 
-	authConfig, err := c.getLoginAuth(ctx, awsEcrRegion)
+	authConfig, err := c.getOrCacheLoginAuth(ctx, awsEcrRegion, cache)
 	if err != nil {
 		return nil, err
 	}
