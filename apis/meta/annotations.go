@@ -21,6 +21,9 @@ const (
 	// outside of a defined schedule. The value is interpreted as a token, and any change
 	// in value SHOULD trigger a reconciliation.
 	ReconcileRequestAnnotation string = "reconcile.fluxcd.io/requestedAt"
+	// SuspendAnnotation is the annotation used to indicate an object is suspended and optionally to store metadata about why a resource
+	// was set to suspended.
+	SuspendedAnnotation string = "reconcile.fluxcd.io/suspended"
 )
 
 // ReconcileAnnotationValue returns a value for the reconciliation request annotation, which can be used to detect
@@ -28,6 +31,13 @@ const (
 func ReconcileAnnotationValue(annotations map[string]string) (string, bool) {
 	requestedAt, ok := annotations[ReconcileRequestAnnotation]
 	return requestedAt, ok
+}
+
+// SuspendAnnotationValue returns a value for the suspend reason annotation, which can be used to detect
+// changes; and, a boolean indicating whether the annotation was set.
+func SuspendedAnnotationValue(annotations map[string]string) (string, bool) {
+	suspend, ok := annotations[SuspendedAnnotation]
+	return suspend, ok
 }
 
 // ReconcileRequestStatus is a struct to embed in a status type, so that all types using the mechanism have the same
