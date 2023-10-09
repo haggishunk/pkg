@@ -1,4 +1,4 @@
-module github.com/fluxcd/pkg/apis/meta
+module github.com/haggishunk/pkg/apis/meta
 
 go 1.20
 
