@@ -40,6 +40,23 @@ func SuspendedAnnotationValue(annotations map[string]string) (string, bool) {
 	return suspend, ok
 }
 
+// SetSuspendedAnnotation sets a suspend key with a supplied string value in an object's metadata annotations
+func SetSuspendedAnnotation(annotations *map[string]string, token string) {
+	if annotations == nil {
+		annotations = &map[string]string{}
+	}
+	if token != "" {
+		(*annotations)[SuspendedAnnotation] = token
+	} else {
+		(*annotations)[SuspendedAnnotation] = "true"
+	}
+}
+
+// UnsetSuspendedAnnotation removes a suspend key from an object's metadata annotations
+func UnsetSuspendedAnnotation(annotations *map[string]string) {
+	delete(*annotations, SuspendedAnnotation)
+}
+
 // ReconcileRequestStatus is a struct to embed in a status type, so that all types using the mechanism have the same
 // field. Use it like this:
 //
